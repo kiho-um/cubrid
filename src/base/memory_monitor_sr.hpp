@@ -64,11 +64,20 @@ namespace cubmem
       inline void sub_stat (char *ptr);
       void aggregate_server_info (MMON_SERVER_INFO &server_info);
       void finalize_dump ();
+      void print_debug_count ();
 
     private:
       tbb::concurrent_unordered_map<std::string, int> m_tag_map; // tag name <-> tag id
       std::string m_server_name;
       std::atomic<uint64_t> m_total_mem_usage;
+      // for debug
+      std::atomic<uint64_t> m_stat_alloc_count[8192];
+      std::atomic<uint64_t> m_stat_dealloc_count[8192];
+      std::atomic<uint64_t> m_total_alloc_count;
+      std::atomic<uint64_t> m_total_dealloc_count;
+      uint64_t m_stat_memory_peak[8192];
+      uint64_t m_total_memory_peak;
+      // for debug end
       std::atomic<int> m_meta_alloc_count;
       int m_target_pos;
       const int m_magic_number;
@@ -93,6 +102,10 @@ namespace cubmem
 
     metainfo->size = (uint64_t) size;
     m_total_mem_usage += size;
+    if (m_total_mem_usage.load () > m_total_memory_peak)
+      {
+	m_total_memory_peak = m_total_mem_usage.load ();
+      }
 
     make_tag_name (tag_name, file, line);
 retry:
@@ -101,6 +114,13 @@ retry:
       {
 	metainfo->tag_id = tag_search->second;
 	m_stat_map[metainfo->tag_id] += metainfo->size;
+
+	uint64_t stat_size = m_stat_map[metainfo->tag_id].load ();
+	if (stat_size > m_stat_memory_peak[metainfo->tag_id])
+	  {
+	    m_stat_memory_peak[metainfo->tag_id] = stat_size;
+	  }
+	m_stat_alloc_count[metainfo->tag_id]++;
       }
     else
       {
@@ -114,11 +134,20 @@ retry:
 	    goto retry;
 	  }
 	m_stat_map[metainfo->tag_id] += metainfo->size;
+
+	uint64_t stat_size = m_stat_map[metainfo->tag_id].load ();
+	if (stat_size > m_stat_memory_peak[metainfo->tag_id])
+	  {
+	    m_stat_memory_peak[metainfo->tag_id] = stat_size;
+	  }
+	m_stat_alloc_count[metainfo->tag_id]++;
       }
 
     // put meta info into the alloced chunk
     metainfo->magic_number = m_magic_number;
     m_meta_alloc_count++;
+
+    m_total_alloc_count++;
   }
 
   inline void memory_monitor::sub_stat (char *ptr)
@@ -150,6 +179,9 @@ retry:
 	    metainfo->magic_number = 0;
 	    m_meta_alloc_count--;
 	    assert (m_meta_alloc_count >= 0);
+
+	    m_stat_dealloc_count[metainfo->tag_id]++;
+	    m_total_dealloc_count++;
 	  }
       }
   }
