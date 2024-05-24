@@ -42,6 +42,7 @@
 #if !defined (SERVER_MODE)
 #include "method_callback.hpp"
 #endif
+#include "memory_cppwrapper.hpp"
 
 namespace cubmethod
 {

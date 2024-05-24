@@ -78,6 +78,7 @@
 #include "xasl.h"
 #include "xasl_cache.h"
 #include "method_runtime_context.hpp"
+#include "memory_cppwrapper.hpp"
 
 #define RMUTEX_NAME_TDES_TOPOP "TDES_TOPOP"
 
@@ -3144,6 +3145,9 @@ void
 logtb_disable_update (THREAD_ENTRY * thread_p)
 {
   db_Disable_modifications = 1;
+#ifdef SERVER_MODE
+  mmon_finalize ();
+#endif
   er_log_debug (ARG_FILE_LINE, "logtb_disable_update: db_Disable_modifications = %d\n", db_Disable_modifications);
 }
 
