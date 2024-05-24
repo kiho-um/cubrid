@@ -154,6 +154,22 @@ struct xasl_state
    && ((xasl)->spec_list->pruning_type == DB_NOT_PARTITIONED_CLASS)  \
    && ((xasl)->aptr_list == NULL) && ((xasl)->scan_ptr == NULL))
 
+#define QEXEC_UNLOCK_UNQUALIFIED_OID(thread_p, xasl) \
+  do \
+    { \
+      LOCK lock_mode = X_LOCK; \
+      SCAN_ID *scan_id = &xasl->curr_spec->s_id; \
+      if (scan_id->type == S_HEAP_SCAN) \
+	{ \
+	  lock_unlock_object_donot_move_to_non2pl (thread_p, &scan_id->s.hsid.curr_oid, &scan_id->s.hsid.cls_oid, lock_mode); \
+	} \
+      else if (scan_id->type == S_INDX_SCAN) \
+	{ \
+	  lock_unlock_object_donot_move_to_non2pl (thread_p, scan_id->s.isid.curr_oidp, &scan_id->s.isid.cls_oid, lock_mode); \
+	} \
+    } \
+  while (0)
+
 #if 0
 /* Note: the following macro is used just for replacement of a repetitive
  * text in order to improve the readability.
@@ -2232,7 +2248,6 @@ qexec_clear_xasl (THREAD_ENTRY * thread_p, xasl_node * xasl, bool is_final)
     {
       pg_cnt += qexec_clear_agg_orderby_const_list (thread_p, xasl, is_final);
     }
-
 
   if (is_final)
     {
@@ -7447,6 +7462,7 @@ qexec_execute_scan (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xasl
 	      if (xs_scan == S_END)
 		{
 		  xasl->next_scan_on = false;
+		  qualified = false;
 		}
 	      else
 		{
@@ -7454,6 +7470,12 @@ qexec_execute_scan (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xasl
 		}
 	    }
 	}			/* if (qualified) */
+
+      if (xasl->curr_spec->s_id.mvcc_select_lock_needed && !qualified)
+	{
+	  /* did not pass the evaluation - unlock object from scan_next_index_lookup_heap(), scan_next_heap_scan() */
+	  QEXEC_UNLOCK_UNQUALIFIED_OID (thread_p, xasl);
+	}
 
     }
   while (1);
@@ -7869,6 +7891,7 @@ qexec_intprt_fnc (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xasl_s
   SCAN_CODE ls_scan;
   DB_LOGICAL ev_res;
   int qualified;
+  bool scan_ptr_qualified;
   AGGREGATE_TYPE *agg_ptr = NULL;
   bool count_star_with_iscan_opt = false;
   SCAN_OPERATION_TYPE scan_operation_type;
@@ -8011,6 +8034,7 @@ qexec_intprt_fnc (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xasl_s
 	    }
 	  /* set scan item as qualified */
 	  qualified = true;
+	  scan_ptr_qualified = false;
 
 	  if (xasl->bptr_list)
 	    {
@@ -8237,11 +8261,19 @@ qexec_intprt_fnc (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xasl_s
 					{
 					  return S_SUCCESS;
 					}
+				      scan_ptr_qualified = true;
 				    }
 				}
 			    }
 
-			  if (xs_scan != S_END)	/* an error happened */
+			  if (xs_scan == S_END)
+			    {
+			      if (!scan_ptr_qualified)
+				{
+				  qualified = false;
+				}
+			    }
+			  else	/* an error happened */
 			    {
 			      return S_ERROR;
 			    }
@@ -8250,6 +8282,11 @@ qexec_intprt_fnc (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE * xasl_s
 		}
 	    }
 
+	  if (xasl->curr_spec->s_id.mvcc_select_lock_needed && !qualified)
+	    {
+	      /* did not pass the evaluation - unlock object from scan_next_index_lookup_heap(), scan_next_heap_scan() */
+	      QEXEC_UNLOCK_UNQUALIFIED_OID (thread_p, xasl);
+	    }
 	  qexec_clear_all_lists (thread_p, xasl);
 	}
 
@@ -11994,7 +12031,7 @@ qexec_execute_obj_fetch (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE *
 	  GOTO_EXIT_ON_ERROR;
 	}
 
-      if (heap_scancache_start (thread_p, &scan_cache, NULL, NULL, true, false, mvcc_snapshot) != NO_ERROR)
+      if (heap_scancache_start (thread_p, &scan_cache, NULL, NULL, true, mvcc_snapshot) != NO_ERROR)
 	{
 	  GOTO_EXIT_ON_ERROR;
 	}
@@ -12695,7 +12732,7 @@ qexec_execute_selupd_list (THREAD_ENTRY * thread_p, XASL_NODE * xasl, XASL_STATE
 	      if (scan_cache_inited == false)
 		{
 		  if (heap_scancache_start (thread_p, &scan_cache, &crt_incr_info.m_class_hfid,
-					    &crt_incr_info.m_class_oid, false, false, mvcc_snapshot) != NO_ERROR)
+					    &crt_incr_info.m_class_oid, false, mvcc_snapshot) != NO_ERROR)
 		    {
 		      goto exit_on_error;
 		    }
@@ -13623,7 +13660,8 @@ qexec_execute_mainblock (THREAD_ENTRY * thread_p, xasl_node * xasl, xasl_state *
       xasl->xasl_stats.fetches += perfmon_get_from_statistic (thread_p, PSTAT_PB_NUM_FETCHES) - old_fetches;
       xasl->xasl_stats.ioreads += perfmon_get_from_statistic (thread_p, PSTAT_PB_NUM_IOREADS) - old_ioreads;
       xasl->xasl_stats.fetch_time +=
-	perfmon_get_from_statistic (thread_p, PSTAT_PB_PAGE_FIX_ACQUIRE_TIME_10USEC) - old_fetch_time;
+	(UINT64) ((perfmon_get_from_statistic (thread_p, PSTAT_PB_PAGE_FIX_ACQUIRE_TIME_10USEC) -
+		   old_fetch_time) / 1000);
     }
 
   thread_dec_recursion_depth (thread_p);
@@ -16974,9 +17012,16 @@ qexec_get_index_pseudocolumn_value_from_tuple (THREAD_ENTRY * thread_p, XASL_NOD
   if (!db_value_is_null (*index_valp))
     {
       /* increase the size if more space needed */
-      while ((int) strlen ((*index_valp)->data.ch.medium.buf) + 1 > *index_len)
+      bool is_resize = false;
+      int need_size = (int) strlen ((*index_valp)->data.ch.medium.buf) + 1;
+      while (need_size > *index_len)
 	{
 	  (*index_len) += CONNECTBY_TUPLE_INDEX_STRING_MEM;
+	  is_resize = true;
+	}
+
+      if (is_resize)
+	{
 	  db_private_free_and_init (thread_p, *index_value);
 	  *index_value = (char *) db_private_alloc (thread_p, *index_len);
 

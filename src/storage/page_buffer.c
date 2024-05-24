@@ -2153,6 +2153,8 @@ try_again:
 	{
 	  perfmon_pbx_fix_acquire_time (thread_p, perf.perf_page_type, perf.perf_page_found, perf.perf_latch_mode,
 					perf.perf_cond_type, perf.fix_wait_time);
+	  perfmon_add_at_offset_to_local (thread_p, pstat_Metadata[PSTAT_PB_PAGE_FIX_ACQUIRE_TIME_10USEC].start_offset,
+					  perf.fix_wait_time);
 	}
     }
 
@@ -5721,15 +5723,9 @@ pgbuf_latch_bcb_upon_fix (THREAD_ENTRY * thread_p, PGBUF_BCB * bufptr, PGBUF_LAT
 	    {
 	      /* the caller is the holder of the buffer page */
 	      holder->fix_count++;
+
 	      /* holder->dirty_before_holder not changed */
-	      if (request_mode == PGBUF_LATCH_WRITE)
-		{
-		  holder->perf_stat.hold_has_write_latch = 1;
-		}
-	      else
-		{
-		  holder->perf_stat.hold_has_read_latch = 1;
-		}
+	      holder->perf_stat.hold_has_read_latch = 1;
 	    }
 #if defined(SERVER_MODE)
 	  else
@@ -5746,16 +5742,9 @@ pgbuf_latch_bcb_upon_fix (THREAD_ENTRY * thread_p, PGBUF_BCB * bufptr, PGBUF_LAT
 
 	      holder->fix_count = 1;
 	      holder->bufptr = bufptr;
-	      if (request_mode == PGBUF_LATCH_WRITE)
-		{
-		  holder->perf_stat.hold_has_write_latch = 1;
-		  holder->perf_stat.hold_has_read_latch = 0;
-		}
-	      else
-		{
-		  holder->perf_stat.hold_has_read_latch = 1;
-		  holder->perf_stat.hold_has_write_latch = 0;
-		}
+
+	      holder->perf_stat.hold_has_read_latch = 1;
+	      holder->perf_stat.hold_has_write_latch = 0;
 	      holder->perf_stat.dirtied_by_holder = 0;
 	      holder->perf_stat.dirty_before_hold = buf_is_dirty;
 	    }
@@ -6878,15 +6867,11 @@ STATIC_INLINE PGBUF_BCB *
 pgbuf_search_hash_chain (THREAD_ENTRY * thread_p, PGBUF_BUFFER_HASH * hash_anchor, const VPID * vpid)
 {
   PGBUF_BCB *bufptr;
-  int mbw_cnt;
 #if defined(SERVER_MODE)
   int rv;
-  int loop_cnt;
 #endif
   TSC_TICKS start_tick, end_tick;
   UINT64 lock_wait_time = 0;
-
-  mbw_cnt = 0;
 
 /* one_phase: no hash-chain mutex */
 one_phase:
@@ -6897,9 +6882,6 @@ one_phase:
       if (VPID_EQ (&(bufptr->vpid), vpid))
 	{
 #if defined(SERVER_MODE)
-	  loop_cnt = 0;
-
-	mutex_lock:
 
 	  rv = PGBUF_BCB_TRYLOCK (bufptr);
 	  if (rv == 0)
@@ -6912,11 +6894,6 @@ one_phase:
 		{
 		  /* give up one_phase */
 		  goto two_phase;
-		}
-
-	      if (loop_cnt++ < mbw_cnt)
-		{
-		  goto mutex_lock;
 		}
 
 	      /* An unconditional request is given for acquiring mutex */
@@ -6971,9 +6948,6 @@ try_again:
       if (VPID_EQ (&(bufptr->vpid), vpid))
 	{
 #if defined(SERVER_MODE)
-	  loop_cnt = 0;
-
-	mutex_lock2:
 
 	  rv = PGBUF_BCB_TRYLOCK (bufptr);
 	  if (rv == 0)
@@ -6987,11 +6961,6 @@ try_again:
 		{
 		  er_set_with_oserror (ER_FATAL_ERROR_SEVERITY, ARG_FILE_LINE, ER_CSS_PTHREAD_MUTEX_TRYLOCK, 0);
 		  return NULL;
-		}
-
-	      if (loop_cnt++ < mbw_cnt)
-		{
-		  goto mutex_lock2;
 		}
 
 	      /* ret == EBUSY : bufptr->mutex is not held */

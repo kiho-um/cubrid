@@ -4703,8 +4703,7 @@ catalog_check_consistency (THREAD_ENTRY * thread_p)
       goto exit_on_error;
     }
 
-  if (heap_scancache_start (thread_p, &scan_cache, &root_hfid, oid_Root_class_oid, true, false, mvcc_snapshot) !=
-      NO_ERROR)
+  if (heap_scancache_start (thread_p, &scan_cache, &root_hfid, oid_Root_class_oid, true, mvcc_snapshot) != NO_ERROR)
     {
       goto exit_on_error;
     }
@@ -5017,8 +5016,7 @@ catalog_dump (THREAD_ENTRY * thread_p, FILE * fp, int dump_flag)
       return;
     }
 
-  if (heap_scancache_start (thread_p, &scan_cache, &root_hfid, oid_Root_class_oid, true, false, mvcc_snapshot) !=
-      NO_ERROR)
+  if (heap_scancache_start (thread_p, &scan_cache, &root_hfid, oid_Root_class_oid, true, mvcc_snapshot) != NO_ERROR)
     {
       return;
     }

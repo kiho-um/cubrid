@@ -53,6 +53,7 @@ namespace cubmethod
     , m_interrupt_id (NO_ERROR)
     , m_is_running (false)
     , m_conn_pool (METHOD_MAX_RECURSION_DEPTH + 1)
+    , m_req_id {0}
   {
     //
   }
@@ -230,6 +231,12 @@ namespace cubmethod
     m_cond_var.wait (ulock, pred);
   }
 
+  int
+  runtime_context::get_depth ()
+  {
+    return m_group_map.size () - m_deferred_free_stack.size ();
+  }
+
   bool
   runtime_context::is_running ()
   {
@@ -262,8 +269,7 @@ namespace cubmethod
   {
     if (query_id == NULL_QUERY_ID || query_id >= SHRT_MAX)
       {
-	// something wrong!
-	assert (false);
+	// false query e.g) SELECT * FROM db_class WHERE 0 <> 0
 	return nullptr;
       }
 
