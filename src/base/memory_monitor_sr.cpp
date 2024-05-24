@@ -41,12 +41,6 @@ namespace cubmem
       m_server_name {server_name},
       m_magic_number {*reinterpret_cast <const int *> ("MMON")},
       m_total_mem_usage {0},
-      m_stat_memory_peak {},
-      m_total_memory_peak {0},
-      m_stat_alloc_count {},
-      m_stat_dealloc_count {},
-      m_total_alloc_count {0},
-      m_total_dealloc_count {0},
       m_meta_alloc_count {0}
   {
     std::string filecopy (__FILE__);
@@ -146,62 +140,6 @@ namespace cubmem
     fflush (outfile_fp);
     fclose (outfile_fp);
   }
-
-  void memory_monitor::print_debug_count ()
-  {
-    double mem_usage_ratio = 0.0;
-    FILE *outfile_fp = fopen ("mmon_debug_count.txt", "w+");
-    MMON_SERVER_INFO server_info;
-    std::vector<uint64_t> stat_alloc_count_vector;
-    std::vector<uint64_t> stat_dealloc_count_vector;
-    std::vector<uint64_t> stat_peak_vector;
-
-    auto MMON_CONVERT_TO_KB_SIZE = [] (uint64_t size)
-    {
-      return ((size) / 1024);
-    };
-
-    strncpy (server_info.server_name, m_server_name.c_str (), m_server_name.size () + 1);
-    server_info.total_mem_usage = m_total_mem_usage.load ();
-    server_info.monitoring_meta_usage = m_meta_alloc_count * MMON_ALLOC_META_SIZE;
-    server_info.num_stat = m_tag_map.size ();
-
-    for (auto it = m_tag_map.begin (); it != m_tag_map.end (); ++it)
-      {
-	server_info.stat_info.push_back (std::make_pair (it->first, m_stat_map[it->second].load ()));
-	stat_alloc_count_vector.push_back (m_stat_alloc_count[it->second].load ());
-	stat_dealloc_count_vector.push_back (m_stat_dealloc_count[it->second].load ());
-	stat_peak_vector.push_back (m_stat_memory_peak[it->second]);
-      }
-
-    fprintf (outfile_fp, "====================cubrid memmon====================\n");
-    fprintf (outfile_fp, "Server Name: %s\n", server_info.server_name);
-    fprintf (outfile_fp, "Total Memory Usage(KB): %lu\n\n", MMON_CONVERT_TO_KB_SIZE (server_info.total_mem_usage));
-    fprintf (outfile_fp, "Total Alloc Count: %lu\n", m_total_alloc_count.load ());
-    fprintf (outfile_fp, "Total Dealloc Count: %lu\n", m_total_dealloc_count.load ());
-    fprintf (outfile_fp, "Total Peak Memory(KB): %lu\n", MMON_CONVERT_TO_KB_SIZE (m_total_memory_peak));
-    fprintf (outfile_fp, "-----------------------------------------------------\n");
-
-    fprintf (outfile_fp, "\t%-50s | %10s | %10s | %10s\n", "File Name", "Alloc Cnt", "Free Cnt", "Peak Mem");
-
-    int cnt = 0;
-    for (const auto &s_info : server_info.stat_info)
-      {
-	if (server_info.total_mem_usage != 0)
-	  {
-	    mem_usage_ratio = s_info.second / (double) server_info.total_mem_usage;
-	    mem_usage_ratio *= 100;
-	  }
-	fprintf (outfile_fp, "\t%-50s | %10lu | %10lu | %10lu\n",s_info.first.c_str (),
-		 stat_alloc_count_vector[cnt], stat_dealloc_count_vector[cnt],
-		 MMON_CONVERT_TO_KB_SIZE (stat_peak_vector[cnt]));
-	cnt++;
-      }
-    fprintf (outfile_fp, "-----------------------------------------------------\n");
-    fflush (outfile_fp);
-    fclose (outfile_fp);
-
-  }
 } // namespace cubmem
 
 using namespace cubmem;
@@ -234,8 +172,6 @@ void mmon_finalize ()
 #if !defined (NDEBUG)
       mmon_Gl->finalize_dump ();
 #endif
-      mmon_Gl->print_debug_count();
-
       delete mmon_Gl;
       mmon_Gl = nullptr;
     }
